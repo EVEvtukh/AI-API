@@ -10,11 +10,56 @@
 """
 
 import os
+import string
 import sys
 
 from openai import OpenAI, OpenAIError
 
 MODEL = "gpt-3.5-turbo"
+
+# Разрешенные символы в заголовках HTTP (RFC 7230): ASCII без пробелов и управления.
+_KEY_ALLOWED = frozenset(string.printable) - frozenset(" 	\r\n\x0b\x0c")
+
+
+def validate_api_key(value: str, name: str = "OPENAI_API_KEY") -> str:
+    """Проверяет API-ключ до обращения к библиотеке.
+
+    Без проверки невалидный ключ приводит к запутанной ошибке кодирования
+    внутри httpx ("'ascii' codec can't encode characters"), потому что ключ
+    подставляется в HTTP-заголовок Authorization.
+    """
+    if not value:
+        sys.exit(
+            f"Ошибка: переменная {name} не задана.\n"
+            "Пропишите ключ в файле .env или задайте его в окружении."
+        )
+
+    stripped = value.strip()
+    if stripped != value:
+        print(f"Предупреждение: из {name} удалены пробелы по краям.")
+        value = stripped
+
+    if not value.isascii():
+        bad = sorted({ch for ch in value if ord(ch) > 127})
+        sys.exit(
+            f"Ошибка: {name} содержит недопустимые (не-ASCII) символы: {''.join(bad)}\n"
+            "Похоже, вместо реального ключа оставлен заполнитель из примера.\n"
+            "Ключ должен выглядеть примерно так: sk-proj-xxxxxxxx... (только латиница и цифры).\n"
+            "Получите его на https://platform.openai.com/api-keys и запишите в .env:\n"
+            f"    {name}=sk-..."
+        )
+
+    if set(value) - _KEY_ALLOWED:
+        sys.exit(f"Ошибка: {name} содержит недопустимые управляющие символы.")
+
+    if not value.startswith("sk-"):
+        print(
+            f"Предупреждение: {name} не начинается с 'sk-'. "
+            "Обычно так начинаются ключи OpenAI — проверьте, тот ли ключ."
+        )
+
+    return value
+
 
 
 def load_env(path: str = ".env") -> None:
@@ -57,8 +102,10 @@ def ask_params() -> dict:
 
 def main() -> None:
     load_env()
-    if not os.environ.get("OPENAI_API_KEY"):
-        sys.exit("Ошибка: переменная окружения OPENAI_API_KEY не задана.")
+    # Проверяем ключ до создания клиента: иначе невалидный ключ превращается
+    # в непонятную ошибку кодирования внутри httpx при сборке заголовка.
+    api_key = validate_api_key(os.environ.get("OPENAI_API_KEY", ""))
+    os.environ["OPENAI_API_KEY"] = api_key
 
     params = ask_params()
 
@@ -67,7 +114,7 @@ def main() -> None:
         messages.append({"role": "system", "content": params["system_message"]})
     messages.append({"role": "user", "content": params["prompt"]})
 
-    client = OpenAI()  # ключ берется из OPENAI_API_KEY
+    client = OpenAI(api_key=api_key)  # ключ валидирован выше
 
     try:
         response = client.chat.completions.create(

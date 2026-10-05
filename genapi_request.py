@@ -15,6 +15,7 @@
 
 import json
 import os
+import string
 import sys
 
 import requests
@@ -25,6 +26,37 @@ TIMEOUT = 300  # синхронный режим может выполнятьс
 REASONING_EFFORT = "low"  # бюджет рассуждений (low = 1024 токена) для reasoning-моделей
 REASONING_EFFORT_TOKENS = 1024  # сколько токенов уходит на рассуждения при low
 MIN_MAX_TOKENS = REASONING_EFFORT_TOKENS + 1  # max_tokens должен быть больше бюджета рассуждений
+
+# Разрешенные символы в заголовках HTTP (RFC 7230): ASCII без пробелов и управления.
+_KEY_ALLOWED = frozenset(string.printable) - frozenset(" 	\r\n\x0b\x0c")
+
+
+def validate_api_key(value: str, name: str = "GENAPI_API_KEY") -> str:
+    """Проверяет API-ключ до обращения к библиотеке."""
+    if not value:
+        sys.exit(
+            f"Ошибка: переменная {name} не задана.\n"
+            "Пропишите ключ в файле .env или задайте его в окружении."
+        )
+
+    stripped = value.strip()
+    if stripped != value:
+        print(f"Предупреждение: из {name} удалены пробелы по краям.")
+        value = stripped
+
+    if not value.isascii():
+        bad = sorted({ch for ch in value if ord(ch) > 127})
+        sys.exit(
+            f"Ошибка: {name} содержит недопустимые (не-ASCII) символы: {''.join(bad)}\n"
+            "Похоже, вместо реального ключа оставлен заполнитель из примера.\n"
+            "Ключ должен состоять только из латиницы и цифр."
+        )
+
+    if set(value) - _KEY_ALLOWED:
+        sys.exit(f"Ошибка: {name} содержит недопустимые управляющие символы.")
+
+    return value
+
 
 
 def load_env(path: str = ".env") -> None:
@@ -105,9 +137,9 @@ def extract_answer(data: dict) -> str | None:
 
 def main() -> None:
     load_env()
-    api_key = os.environ.get("GENAPI_API_KEY")
-    if not api_key:
-        sys.exit("Ошибка: в .env не задан GENAPI_API_KEY.")
+    # Проверяем ключ до обращения к API: иначе невалидный ключ превращается
+    # в непонятную ошибку кодирования внутри httpx/requests при сборке заголовка.
+    api_key = validate_api_key(os.environ.get("GENAPI_API_KEY", ""))
 
     params = ask_params()
 
