@@ -61,7 +61,6 @@ def validate_api_key(value: str, name: str = "OPENAI_API_KEY") -> str:
     return value
 
 
-
 def load_env(path: str = ".env") -> None:
     """Загружает переменные из .env в окружение.
 

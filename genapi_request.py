@@ -26,6 +26,8 @@ TIMEOUT = 300  # синхронный режим может выполнятьс
 REASONING_EFFORT = "low"  # бюджет рассуждений (low = 1024 токена) для reasoning-моделей
 REASONING_EFFORT_TOKENS = 1024  # сколько токенов уходит на рассуждения при low
 MIN_MAX_TOKENS = REASONING_EFFORT_TOKENS + 1  # max_tokens должен быть больше бюджета рассуждений
+PROMPTS_FILE = "prompts.json"  # сценарии запросов, доступные по номеру
+RUSSIAN_RULE = "Всегда отвечай на русском языке."  # без этого модель часто уходит в English
 
 # Разрешенные символы в заголовках HTTP (RFC 7230): ASCII без пробелов и управления.
 _KEY_ALLOWED = frozenset(string.printable) - frozenset(" 	\r\n\x0b\x0c")
@@ -58,6 +60,47 @@ def validate_api_key(value: str, name: str = "GENAPI_API_KEY") -> str:
     return value
 
 
+def load_prompts(path: str = PROMPTS_FILE) -> list[dict]:
+    """Читает сценарии из prompts.json.
+
+    Возвращает пустой список, если файла нет или он битый, — запуск при этом
+    не падает, просто сценарии недоступны и работает ручной ввод.
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"Предупреждение: {path} не читается как JSON ({exc}). Работаю без сценариев.")
+        return []
+
+    prompts = data.get("prompts") if isinstance(data, dict) else None
+    if not isinstance(prompts, list):
+        print(f"Предупреждение: в {path} нет списка 'prompts'. Работаю без сценариев.")
+        return []
+
+    return [p for p in prompts if isinstance(p, dict) and "id" in p]
+
+
+def choose_scenario(prompts: list[dict]) -> dict | None:
+    """Показывает меню и возвращает выбранный сценарий (None = свой запрос)."""
+    print("\nСценарии из prompts.json:")
+    for item in prompts:
+        print(f"  {item['id']:>3}. {item.get('name', 'без названия')}")
+    print("    0. Ввести свой запрос вручную")
+
+    answer = input("\nНомер сценария: ").strip()
+    if not answer or answer == "0":
+        return None
+
+    by_id = {str(item["id"]): item for item in prompts}
+    if answer in by_id:
+        return by_id[answer]
+
+    print(f"Сценария с номером {answer} нет — перехожу на ручной ввод.")
+    return None
+
 
 def load_env(path: str = ".env") -> None:
     """Загружает переменные из .env в окружение.
@@ -77,17 +120,45 @@ def load_env(path: str = ".env") -> None:
             os.environ[key.strip()] = value.strip().strip("'\"")
 
 
-def ask_params() -> dict:
-    """Запрашивает параметры запроса у пользователя."""
-    prompt = input("Введите запрос для модели: ").strip()
-    if not prompt:
+def ask_params(prompts: list[dict]) -> dict:
+    """Запрашивает параметры и возвращает словарь для сборки запроса."""
+    scenario = choose_scenario(prompts)
+
+    if scenario:
+        # Встроенный сценарий: просим только текст входа (по умолчанию test_input)
+        test_input = scenario.get("test_input", "")
+        print(f"\nСценарий: {scenario.get('name', 'без названия')}")
+        print(f"По умолчанию (test_input): {test_input[:80]}...")
+        text_input = input("Текст/данные (Enter = использовать test_input): ").strip()
+        prompt_text = text_input if text_input else test_input
+        if not prompt_text:
+            sys.exit("Ошибка: текст не может быть пустым.")
+
+        temperature = float(input("Temperature (например 0.7): ") or 0.7)
+        while True:
+            max_tokens = int(
+                input(f"Max tokens (минимум {MIN_MAX_TOKENS}, например 2048): ") or 2048
+            )
+            if max_tokens > REASONING_EFFORT_TOKENS:
+                break
+            print(
+                f"Ошибка: max_tokens ({max_tokens}) должен быть больше "
+                f"{REASONING_EFFORT_TOKENS} — бюджет токенов на рассуждения модели."
+            )
+
+        return {
+            "scenario": scenario,
+            "prompt_text": prompt_text,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+    # Ручной ввод (свободный запрос)
+    prompt_text = input("Введите запрос для модели: ").strip()
+    if not prompt_text:
         sys.exit("Ошибка: запрос не может быть пустым.")
 
     temperature = float(input("Temperature (например 0.7): ") or 0.7)
-
-    # gpt-6-astra — reasoning-модель: бюджет рассуждений (1024 токена при
-    # reasoning_effort=low) должен быть меньше max_tokens, иначе GenAPI вернет
-    # ошибку 422. Поэтому требуем max_tokens > 1024.
     while True:
         max_tokens = int(input(f"Max tokens (минимум {MIN_MAX_TOKENS}, например 2048): ") or 2048)
         if max_tokens > REASONING_EFFORT_TOKENS:
@@ -97,15 +168,44 @@ def ask_params() -> dict:
             f"{REASONING_EFFORT_TOKENS} — бюджет токенов на рассуждения модели."
         )
 
-    # system_message опционален: пустая строка — не используем
     system_message = input("System message (можно пропустить, Enter): ").strip()
 
     return {
-        "prompt": prompt,
+        "scenario": None,
+        "prompt_text": prompt_text,
+        "system_message": system_message,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "system_message": system_message,
     }
+
+
+def build_messages(params: dict) -> list[dict]:
+    """Собирает системное и пользовательское сообщения по результатам ask_params."""
+    scenario = params.get("scenario")
+    if scenario:
+        # Система из сценария + правило на русский
+        parts = [
+            scenario.get("role"),
+            scenario.get("context"),
+            scenario.get("format"),
+            RUSSIAN_RULE,
+        ]
+        system = "\n".join(part for part in parts if part)
+        # Пользователь: вопрос + тестовый/введённый текст
+        user = scenario.get("question", "")
+        if params.get("prompt_text"):
+            user = f"{user}\n\n{params['prompt_text']}"
+    else:
+        # Свободный запрос: правило на русский + опциональная system message
+        system = RUSSIAN_RULE
+        if params.get("system_message"):
+            system = f"{params['system_message']}\n{RUSSIAN_RULE}"
+        user = params["prompt_text"]
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
 
 
 def extract_answer(data: dict) -> str | None:
@@ -141,12 +241,8 @@ def main() -> None:
     # в непонятную ошибку кодирования внутри httpx/requests при сборке заголовка.
     api_key = validate_api_key(os.environ.get("GENAPI_API_KEY", ""))
 
-    params = ask_params()
-
-    messages = []
-    if params["system_message"]:
-        messages.append({"role": "system", "content": params["system_message"]})
-    messages.append({"role": "user", "content": params["prompt"]})
+    params = ask_params(load_prompts())
+    messages = build_messages(params)
 
     # Модель указывается в URL (network_id), а не в теле запроса
     url = f"{BASE_URL}/{MODEL}"
