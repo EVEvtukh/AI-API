@@ -50,3 +50,5 @@ desktop.ini
 # Локальные артефакты проекта
 *.log
 *.tmp
+
+prompts.json.bak
