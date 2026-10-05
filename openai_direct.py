@@ -1,12 +1,11 @@
-"""Обычный запрос к OpenAI через официальную библиотеку.
+"""Заглушка: прямой доступ к OpenAI в этом проекте не используется.
 
-Запуск:
-    python openai_direct.py
+Все запросы идут через GenAPI — см. genapi_request.py и GENAPI_API_KEY в .env.
 
-Зависимости:
-    pip install openai
-    Ключ OpenAI задается переменной окружения OPENAI_API_KEY
-    (например, в файле .env).
+Скрипт оставлен как рабочий образец на случай, если понадобится обращаться к
+OpenAI напрямую. По умолчанию он отключен флагом DISABLED: запуск печатает
+подсказку и завершается без traceback. Чтобы включить, добавьте в .env реальный
+OPENAI_API_KEY и поставьте DISABLED = False.
 """
 
 import os
@@ -16,6 +15,7 @@ import sys
 from openai import OpenAI, OpenAIError
 
 MODEL = "gpt-3.5-turbo"
+DISABLED = True  # True = скрипт не используется, работает только через GenAPI
 
 # Разрешенные символы в заголовках HTTP (RFC 7230): ASCII без пробелов и управления.
 _KEY_ALLOWED = frozenset(string.printable) - frozenset(" 	\r\n\x0b\x0c")
@@ -101,6 +101,16 @@ def ask_params() -> dict:
 
 
 def main() -> None:
+    if DISABLED:
+        sys.exit(
+            "Этот скрипт отключен: OpenAI напрямую не используется.\n"
+            "Работа идет через GenAPI — запустите genapi_request.py\n"
+            "(ключ GENAPI_API_KEY берется из .env).\n"
+            "\n"
+            "Чтобы включить прямой доступ к OpenAI: добавьте в .env реальный\n"
+            "OPENAI_API_KEY и поставьте DISABLED = False в этом файле."
+        )
+
     load_env()
     # Проверяем ключ до создания клиента: иначе невалидный ключ превращается
     # в непонятную ошибку кодирования внутри httpx при сборке заголовка.
