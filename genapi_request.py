@@ -28,7 +28,12 @@ MIN_MAX_TOKENS = REASONING_EFFORT_TOKENS + 1  # max_tokens должен быть
 
 
 def load_env(path: str = ".env") -> None:
-    """Простейшая загрузка переменных из файла .env в окружение."""
+    """Загружает переменные из .env в окружение.
+
+    Значения из .env перекрывают переменные процесса. os.environ.setdefault()
+    оставил бы в силе старую переменную процесса, и скрипт молча ушёл бы
+    с неактуальным ключом вместо значения из файла.
+    """
     if not os.path.exists(path):
         return
     with open(path, encoding="utf-8") as f:
@@ -37,7 +42,7 @@ def load_env(path: str = ".env") -> None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+            os.environ[key.strip()] = value.strip().strip("'\"")
 
 
 def ask_params() -> dict:
