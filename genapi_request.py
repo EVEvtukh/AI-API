@@ -235,22 +235,31 @@ def extract_answer(data: dict) -> str | None:
         return None
 
 
-def main() -> None:
-    load_env()
-    # Проверяем ключ до обращения к API: иначе невалидный ключ превращается
-    # в непонятную ошибку кодирования внутри httpx/requests при сборке заголовка.
-    api_key = validate_api_key(os.environ.get("GENAPI_API_KEY", ""))
+def save_prompts(prompts: list[dict], path: str = PROMPTS_FILE) -> None:
+    """Перезаписывает prompts.json списком сценариев."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"prompts": prompts}, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
-    params = ask_params(load_prompts())
-    messages = build_messages(params)
 
+def send_request(
+    api_key: str,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+) -> dict:
+    """Отправляет запрос в GenAPI и возвращает разобранный JSON-ответ.
+
+    Завершает процесс с понятным сообщением при сетевой ошибке, HTTP-ошибке
+    или не-успешном статусе генерации.
+    """
     # Модель указывается в URL (network_id), а не в теле запроса
     url = f"{BASE_URL}/{MODEL}"
 
     payload = {
         "messages": messages,
-        "temperature": params["temperature"],
-        "max_tokens": params["max_tokens"],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
         "reasoning_effort": REASONING_EFFORT,  # явно задаем бюджет рассуждений
         "is_sync": True,  # ждем результат в том же HTTP-ответе
     }
@@ -278,14 +287,11 @@ def main() -> None:
             f"Полный ответ: {json.dumps(data, ensure_ascii=False)}"
         )
 
-    answer = extract_answer(data)
-    if answer is None:
-        sys.exit(f"Неожиданный формат ответа: {json.dumps(data, ensure_ascii=False)}")
+    return data
 
-    print("\n--- Ответ модели ---")
-    print(answer)
 
-    # Расход токенов и стоимость, если пришли в ответе
+def print_usage(data: dict) -> None:
+    """Печатает расход токенов и стоимость, если они пришли в ответе."""
     inner = data.get("response") or {}
     if isinstance(inner, list) and inner:
         inner = inner[0]
@@ -297,6 +303,31 @@ def main() -> None:
         )
     if data.get("cost") is not None:
         print(f"(стоимость запроса: {data['cost']} кредитов)")
+
+
+def main() -> None:
+    load_env()
+    # Проверяем ключ до обращения к API: иначе невалидный ключ превращается
+    # в непонятную ошибку кодирования внутри httpx/requests при сборке заголовка.
+    api_key = validate_api_key(os.environ.get("GENAPI_API_KEY", ""))
+
+    params = ask_params(load_prompts())
+    messages = build_messages(params)
+
+    data = send_request(
+        api_key=api_key,
+        messages=messages,
+        temperature=params["temperature"],
+        max_tokens=params["max_tokens"],
+    )
+
+    answer = extract_answer(data)
+    if answer is None:
+        sys.exit(f"Неожиданный формат ответа: {json.dumps(data, ensure_ascii=False)}")
+
+    print("\n--- Ответ модели ---")
+    print(answer)
+    print_usage(data)
 
 
 if __name__ == "__main__":
