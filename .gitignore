@@ -1,0 +1,52 @@
+# Секреты и локальные конфигурации
+# .env содержит реальные ключи API — он никогда не должен попасть в git.
+# .env.example — наоборот, нужен в репозитории как шаблон, поэтому исключён.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Окружение. Переносить и коммитить .venv нельзя: он привязан к
+# абсолютному пути Python конкретной машины. Ставится из requirements.txt.
+.venv/
+venv/
+env/
+ENV/
+
+# Кэш Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Сборка и упаковка
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Тесты и проверка типов/лининги
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Инструменты
+.ipynb_checkpoints/
+.mimocode/
+
+# Среда разработки
+.idea/
+.vscode/
+*.swp
+
+# Операционная система
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Локальные артефакты проекта
+*.log
+*.tmp
